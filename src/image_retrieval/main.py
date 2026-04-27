@@ -44,15 +44,20 @@ for i, image_file in tqdm.tqdm(enumerate(image_files), total=len(image_files)):
     try:
         image = Image.open(image_file).convert("RGB")
     except Exception as e:
-        print(f"Error loading image {image_file}: {e}")
-        continue
+        try:
+            image = Image.open(image_file).convert("RGBA")
+        except Exception as e:
+            print(f"Error loading image {image_file}: {e}")
+            continue
 
     image = preprocess(image).unsqueeze(0).to(device)  # type: ignore
     with torch.no_grad(), torch.autocast(device.type):
         image_features = model.encode_image(image, normalize=True)  # type: ignore
 
-        all_image_features[image_file] = image_features
+        all_image_features[image_file] = image_features.detach().squeeze().cpu().numpy()  # type: ignore
 
     if i % 500 == 0:
         # Save the image features to a file
         np.savez(image_feature_file, all_image_features)  # type: ignore
+
+np.savez(image_feature_file, all_image_features)  # type: ignore
