@@ -18,8 +18,10 @@ def _():
     from wigglystuff import ParallelCoordinates
     import marimo as mo
     import polars as pl
+    import random
+    from copy import deepcopy
 
-    return ParallelCoordinates, Path, mo, np, pl
+    return ParallelCoordinates, Path, deepcopy, mo, np, pl, random
 
 
 @app.cell
@@ -37,7 +39,6 @@ def _(all_image_features, base_folder, np):
 
     img_paths = [base_folder / path for path in keys]
     values.shape
-
     return keys, values
 
 
@@ -50,9 +51,12 @@ def _(evoc, values):
 
 @app.cell
 def _(clusterer, pl):
-    df = pl.DataFrame({
-        f"Layer_{len(clusterer.cluster_layers_) - i}": v for i, v in enumerate(clusterer.cluster_layers_)
-    })
+    df = pl.DataFrame(
+        {
+            f"Layer_{len(clusterer.cluster_layers_) - i}": v
+            for i, v in enumerate(clusterer.cluster_layers_)
+        }
+    )
     return (df,)
 
 
@@ -71,8 +75,22 @@ def _(keys, widget):
 
 
 @app.cell
-def _(selected_img_paths):
-    imgs_to_display = selected_img_paths[3 * 3]
+def _(base_folder, deepcopy, mo, random, selected_img_paths):
+    imgs_to_display = deepcopy(selected_img_paths)
+    random.shuffle(imgs_to_display)
+    imgs_to_display = imgs_to_display[: 3 * 3]
+    rows = [imgs_to_display[i : i + 3] for i in range(0, len(imgs_to_display), 3)]
+    mo.vstack(
+        [
+            mo.hstack(
+                [
+                    mo.image(str(base_folder / path), width=300, height=300)
+                    for path in row
+                ]
+            )
+            for row in rows
+        ]
+    )
     return
 
 
