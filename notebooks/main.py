@@ -150,24 +150,34 @@ def _(
 
     _top_indices = np.argsort(_similarities)[::-1][:9]
 
+    # Normalise all similarities (full set) to [-1, 1] via min-max
+    _s_min, _s_max = _similarities.min(), _similarities.max()
+
+    def _normalise(s):
+        if _s_max == _s_min:
+            return 0.0
+        return float(2.0 * (s - _s_min) / (_s_max - _s_min) - 1.0)
+
     def _render(path, score):
         try:
-            with open(path, "rb") as _f:
-                _data = base64.b64encode(_f.read()).decode()
-            _ext = Path(path).suffix.lower().lstrip(".")
-            if _ext == "jpg":
-                _ext = "jpeg"
+            from PIL import Image
+            import io
+
+            _img = Image.open(path).convert("RGB")
+            _img.thumbnail((300, 300), Image.LANCZOS)
+            _buf = io.BytesIO()
+            _img.save(_buf, format="JPEG", quality=80)
+            _data = base64.b64encode(_buf.getvalue()).decode()
             return mo.Html(
-                f'<div style="position:relative;display:inline-block;width:300px;height:300px;overflow:hidden;">'
-                f'<img src="data:image/{_ext};base64,{_data}" style="width:300px;height:300px;object-fit:cover;">'
-                f'<div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.65);'
-                f'color:white;text-align:center;padding:4px 8px;font-size:14px;font-weight:bold;">'
+                f'<div style="display:inline-block;width:300px;text-align:center;">'
+                f'<img src="data:image/jpeg;base64,{_data}" style="width:300px;height:300px;object-fit:cover;display:block;">'
+                f'<div style="background:#222;color:white;padding:4px 8px;font-size:14px;font-weight:bold;">'
                 f"{score:.4f}</div></div>"
             )
         except Exception:
             return mo.md(f"_(error loading {Path(path).name})_")
 
-    _items = [_render(keys[i], float(_similarities[i])) for i in _top_indices]
+    _items = [_render(keys[i], _normalise(_similarities[i])) for i in _top_indices]
     mo.vstack([mo.hstack(_items[_r * 3 : _r * 3 + 3]) for _r in range(3)])
     return
 
