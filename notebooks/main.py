@@ -104,12 +104,12 @@ def _():
         if torch.backends.mps.is_available()
         else torch.device("cpu")
     )
-    model, _preprocess = create_model_from_pretrained(
+    model, preprocess = create_model_from_pretrained(
         "hf-hub:timm/ViT-SO400M-14-SigLIP2"
     )
     model = model.to(device)
     tokenizer = get_tokenizer("hf-hub:timm/ViT-SO400M-14-SigLIP2")
-    return device, model, tokenizer, torch
+    return device, model, preprocess, tokenizer, torch
 
 
 @app.cell
@@ -178,6 +178,79 @@ def _(
             return mo.md(f"_(error loading {Path(path).name})_")
 
     _items = [_render(keys[i], _normalise(_similarities[i])) for i in _top_indices]
+    mo.vstack([mo.hstack(_items[_r * 3 : _r * 3 + 3]) for _r in range(3)])
+    return
+
+
+@app.cell
+def _(mo):
+    upload_image = mo.ui.file(
+        filetypes=[".jpg", ".jpeg", ".png", ".bmp", ".webp"],
+        label="Upload an image to search for similar images",
+    )
+    upload_image
+    return (upload_image,)
+
+
+@app.cell
+def _(
+    Path,
+    device,
+    keys,
+    mo,
+    model,
+    np,
+    preprocess,
+    torch,
+    upload_image,
+    values,
+):
+    import base64 as _base64
+    import io as _io
+    from PIL import Image as _PILImage
+
+    mo.stop(
+        not upload_image.value,
+        mo.md("Upload an image above to find similar images."),
+    )
+
+    _file = upload_image.value[0]
+    _uploaded_img = _PILImage.open(_io.BytesIO(_file.contents)).convert("RGB")
+    _img_tensor = preprocess(_uploaded_img).unsqueeze(0).to(device)
+
+    with torch.no_grad(), torch.autocast(device.type):
+        _img_features = model.encode_image(_img_tensor, normalize=True)
+
+    _img_features_np = _img_features.squeeze().cpu().numpy()
+    _img_similarities = values @ _img_features_np
+
+    _top_indices = np.argsort(_img_similarities)[::-1][:9]
+    _s_min, _s_max = _img_similarities.min(), _img_similarities.max()
+
+    def _normalise(s):
+        if _s_max == _s_min:
+            return 0.0
+        return float(2.0 * (s - _s_min) / (_s_max - _s_min) - 1.0)
+
+    def _render_img(path, score):
+        try:
+            _ri = _PILImage.open(path).convert("RGB")
+            _ri.thumbnail((300, 300), _PILImage.LANCZOS)
+            _buf = _io.BytesIO()
+            _ri.save(_buf, format="JPEG", quality=80)
+            _data = _base64.b64encode(_buf.getvalue()).decode()
+            return mo.Html(
+                f'<div style="display:inline-block;width:300px;text-align:center;">'
+                f'<img src="data:image/jpeg;base64,{_data}" style="width:300px;height:300px;object-fit:cover;display:block;">'
+                f'<div style="background:#222;color:white;padding:4px 8px;font-size:14px;font-weight:bold;">'
+                f"{score:.4f}</div></div>"
+            )
+        except Exception:
+            return mo.md(f"_(error loading {Path(path).name})_")
+
+    _items = [
+        _render_img(keys[i], _normalise(_img_similarities[i])) for i in _top_indices
+    ]
     mo.vstack([mo.hstack(_items[_r * 3 : _r * 3 + 3]) for _r in range(3)])
     return
 
