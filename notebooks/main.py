@@ -80,17 +80,15 @@ def _(base_folder, deepcopy, mo, random, selected_img_paths):
     random.shuffle(imgs_to_display)
     imgs_to_display = imgs_to_display[: 3 * 3]
     rows = [imgs_to_display[i : i + 3] for i in range(0, len(imgs_to_display), 3)]
-    mo.vstack(
-        [
-            mo.hstack(
-                [
-                    mo.image(str(base_folder / path), width=300, height=300)
-                    for path in row
-                ]
-            )
-            for row in rows
-        ]
-    )
+
+    def _clickable_image(path):
+        full_path = base_folder / path
+        img = mo.image(str(full_path), width=300, height=300)
+        return mo.Html(
+            f'<a href="{full_path.as_uri()}" target="_blank" title="Open original" style="display:inline-block;cursor:pointer;">{img.text}</a>'
+        )
+
+    mo.vstack([mo.hstack([_clickable_image(path) for path in row]) for row in rows])
     return
 
 
@@ -126,6 +124,7 @@ def _(mo):
 @app.cell
 def _(
     Path,
+    base_folder,
     device,
     keys,
     mo,
@@ -168,11 +167,13 @@ def _(
             _buf = io.BytesIO()
             _img.save(_buf, format="JPEG", quality=80)
             _data = base64.b64encode(_buf.getvalue()).decode()
+            _uri = (base_folder / path).as_uri()
             return mo.Html(
+                f'<a href="{_uri}" target="_blank" style="display:inline-block;text-decoration:none;">'
                 f'<div style="display:inline-block;width:300px;text-align:center;">'
                 f'<img src="data:image/jpeg;base64,{_data}" style="width:300px;height:300px;object-fit:cover;display:block;">'
                 f'<div style="background:#222;color:white;padding:4px 8px;font-size:14px;font-weight:bold;">'
-                f"{score:.4f}</div></div>"
+                f"{score:.4f}</div></div></a>"
             )
         except Exception:
             return mo.md(f"_(error loading {Path(path).name})_")
@@ -195,6 +196,7 @@ def _(mo):
 @app.cell
 def _(
     Path,
+    base_folder,
     device,
     keys,
     mo,
@@ -239,11 +241,13 @@ def _(
             _buf = _io.BytesIO()
             _ri.save(_buf, format="JPEG", quality=80)
             _data = _base64.b64encode(_buf.getvalue()).decode()
+            _uri = (base_folder / path).as_uri()
             return mo.Html(
+                f'<a href="{_uri}" target="_blank" style="display:inline-block;text-decoration:none;">'
                 f'<div style="display:inline-block;width:300px;text-align:center;">'
                 f'<img src="data:image/jpeg;base64,{_data}" style="width:300px;height:300px;object-fit:cover;display:block;">'
                 f'<div style="background:#222;color:white;padding:4px 8px;font-size:14px;font-weight:bold;">'
-                f"{score:.4f}</div></div>"
+                f"{score:.4f}</div></div></a>"
             )
         except Exception:
             return mo.md(f"_(error loading {Path(path).name})_")
