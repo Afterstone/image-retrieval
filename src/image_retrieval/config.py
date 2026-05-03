@@ -9,3 +9,12 @@ IMAGE_FOLDER = Path(os.environ["IMAGE_FOLDER"])
 FEATURE_FILE_NAME = os.getenv("FEATURE_FILE_NAME", "__siglip2_image_features.npz")
 FEATURE_FILE = IMAGE_FOLDER / FEATURE_FILE_NAME
 MODEL_ID = os.getenv("MODEL_ID", "hf-hub:timm/ViT-SO400M-14-SigLIP2")
+
+
+IMAGE_EXTENSIONS = ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.gif"]
+CHECKPOINT_EVERY = int(os.getenv("CHECKPOINT_EVERY", "500"))
+
+TOP_K = int(os.getenv("TOP_K", "9"))
+
+THUMBNAIL_SIZE = int(os.getenv("THUMBNAIL_SIZE", "300"))
+JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "80"))

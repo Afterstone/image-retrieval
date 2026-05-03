@@ -2,6 +2,8 @@ import numpy as np
 import torch
 from PIL import Image
 
+from .config import TOP_K
+
 
 def encode_text(model, tokenizer, device: torch.device, query: str) -> np.ndarray:
     tokens = tokenizer([query]).to(device)
@@ -22,7 +24,7 @@ def encode_image(
 def rank_by_similarity(
     feature_matrix: np.ndarray,
     query_vector: np.ndarray,
-    top_k: int = 9,
+    top_k: int = TOP_K,
 ) -> tuple[np.ndarray, np.ndarray]:
     similarities = feature_matrix @ query_vector
     top_indices = np.argsort(similarities)[::-1][:top_k]

@@ -3,10 +3,9 @@ from pathlib import Path
 import tqdm
 from PIL import Image
 
+from .config import CHECKPOINT_EVERY, IMAGE_EXTENSIONS
 from .features import FeatureStore
 from .search import encode_image
-
-IMAGE_EXTENSIONS = ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.gif"]
 
 
 def discover_images(
@@ -30,7 +29,7 @@ def encode_and_index(
     device,
     image_files: list[str],
     store: FeatureStore,
-    checkpoint_every: int = 500,
+    checkpoint_every: int = CHECKPOINT_EVERY,
 ) -> None:
     for i, image_file in tqdm.tqdm(enumerate(image_files), total=len(image_files)):
         try:
