@@ -13,22 +13,22 @@ def _():
 
 @app.cell
 def _():
-    from pathlib import Path
     from wigglystuff import ParallelCoordinates
     import marimo as mo
     import polars as pl
     import random
     from copy import deepcopy
 
-    return ParallelCoordinates, Path, deepcopy, mo, pl, random
+    return ParallelCoordinates, deepcopy, mo, pl, random
 
 
 @app.cell
-def _(Path):
+def _():
     from image_retrieval import FeatureStore
+    from image_retrieval.config import FEATURE_FILE, IMAGE_FOLDER
 
-    base_folder = Path("/Users/rikard/Google Drive/Memes")
-    store = FeatureStore.load(base_folder / "__siglip2_image_features.npz")
+    base_folder = IMAGE_FOLDER
+    store = FeatureStore.load(FEATURE_FILE)
     return base_folder, store
 
 

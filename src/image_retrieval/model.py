@@ -1,7 +1,7 @@
 import torch
 from open_clip import create_model_from_pretrained, get_tokenizer
 
-MODEL_ID = "hf-hub:timm/ViT-SO400M-14-SigLIP2"
+from .config import MODEL_ID
 
 
 def load_siglip2(
