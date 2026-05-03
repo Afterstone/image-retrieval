@@ -14,30 +14,28 @@ def _():
 @app.cell
 def _():
     from pathlib import Path
-    import numpy as np
     from wigglystuff import ParallelCoordinates
     import marimo as mo
     import polars as pl
     import random
     from copy import deepcopy
 
-    return ParallelCoordinates, Path, deepcopy, mo, np, pl, random
+    return ParallelCoordinates, Path, deepcopy, mo, pl, random
 
 
 @app.cell
-def _(Path, np):
+def _(Path):
+    from image_retrieval import FeatureStore
+
     base_folder = Path("/Users/rikard/Google Drive/Memes")
-    image_feature_file = base_folder / "__siglip2_image_features.npz"
-    all_image_features = np.load(image_feature_file, allow_pickle=True)["arr_0"].item()
-    return all_image_features, base_folder
+    store = FeatureStore.load(base_folder / "__siglip2_image_features.npz")
+    return base_folder, store
 
 
 @app.cell
-def _(all_image_features, base_folder, np):
-    keys = list(all_image_features.keys())
-    values = np.array([all_image_features[k] for k in keys])
-
-    img_paths = [base_folder / path for path in keys]
+def _(store):
+    keys = store.keys
+    values = store.values
     values.shape
     return keys, values
 
@@ -94,20 +92,29 @@ def _(base_folder, deepcopy, mo, random, selected_img_paths):
 
 @app.cell
 def _():
-    import torch
-    from open_clip import create_model_from_pretrained, get_tokenizer
+    from image_retrieval import (
+        get_device,
+        load_siglip2,
+        encode_text,
+        encode_image,
+        normalize_scores,
+        rank_by_similarity,
+        render_result_card,
+    )
 
-    device = (
-        torch.device("mps")
-        if torch.backends.mps.is_available()
-        else torch.device("cpu")
+    device = get_device()
+    model, preprocess, tokenizer = load_siglip2(device=device)
+    return (
+        device,
+        encode_image,
+        encode_text,
+        model,
+        normalize_scores,
+        preprocess,
+        rank_by_similarity,
+        render_result_card,
+        tokenizer,
     )
-    model, preprocess = create_model_from_pretrained(
-        "hf-hub:timm/ViT-SO400M-14-SigLIP2"
-    )
-    model = model.to(device)
-    tokenizer = get_tokenizer("hf-hub:timm/ViT-SO400M-14-SigLIP2")
-    return device, model, preprocess, tokenizer, torch
 
 
 @app.cell
@@ -123,62 +130,29 @@ def _(mo):
 
 @app.cell
 def _(
-    Path,
-    base_folder,
     device,
+    encode_text,
     keys,
     mo,
     model,
-    np,
+    normalize_scores,
+    rank_by_similarity,
+    render_result_card,
     search_query,
     tokenizer,
-    torch,
     values,
 ):
-    import base64
-
     _query = search_query.value
     mo.stop(not _query, mo.md("Enter a search query above."))
 
-    _tokens = tokenizer([_query]).to(device)
-    with torch.no_grad(), torch.autocast(device.type):
-        _text_features = model.encode_text(_tokens, normalize=True)
+    _text_features_np = encode_text(model, tokenizer, device, _query)
+    _top_indices, _similarities = rank_by_similarity(values, _text_features_np)
+    _norm_scores = normalize_scores(_similarities)
 
-    _text_features_np = _text_features.squeeze().cpu().numpy()
-    _similarities = values @ _text_features_np
-
-    _top_indices = np.argsort(_similarities)[::-1][:9]
-
-    # Normalise all similarities (full set) to [-1, 1] via min-max
-    _s_min, _s_max = _similarities.min(), _similarities.max()
-
-    def _normalise(s):
-        if _s_max == _s_min:
-            return 0.0
-        return float(2.0 * (s - _s_min) / (_s_max - _s_min) - 1.0)
-
-    def _render(path, score):
-        try:
-            from PIL import Image
-            import io
-
-            _img = Image.open(path).convert("RGB")
-            _img.thumbnail((300, 300), Image.LANCZOS)
-            _buf = io.BytesIO()
-            _img.save(_buf, format="JPEG", quality=80)
-            _data = base64.b64encode(_buf.getvalue()).decode()
-            _uri = (base_folder / path).as_uri()
-            return mo.Html(
-                f'<a href="{_uri}" target="_blank" style="display:inline-block;text-decoration:none;">'
-                f'<div style="display:inline-block;width:300px;text-align:center;">'
-                f'<img src="data:image/jpeg;base64,{_data}" style="width:300px;height:300px;object-fit:cover;display:block;">'
-                f'<div style="background:#222;color:white;padding:4px 8px;font-size:14px;font-weight:bold;">'
-                f"{score:.4f}</div></div></a>"
-            )
-        except Exception:
-            return mo.md(f"_(error loading {Path(path).name})_")
-
-    _items = [_render(keys[i], _normalise(_similarities[i])) for i in _top_indices]
+    _items = [
+        mo.Html(render_result_card(keys[i], float(_norm_scores[i])))
+        for i in _top_indices
+    ]
     mo.vstack([mo.hstack(_items[_r * 3 : _r * 3 + 3]) for _r in range(3)])
     return
 
@@ -195,21 +169,20 @@ def _(mo):
 
 @app.cell
 def _(
-    Path,
-    base_folder,
     device,
+    encode_image,
     keys,
     mo,
     model,
-    np,
+    normalize_scores,
     preprocess,
-    torch,
+    rank_by_similarity,
+    render_result_card,
     upload_image,
     values,
 ):
-    import base64 as _base64
-    import io as _io
-    from PIL import Image as _PILImage
+    import io
+    from PIL import Image
 
     mo.stop(
         not upload_image.value,
@@ -217,43 +190,14 @@ def _(
     )
 
     _file = upload_image.value[0]
-    _uploaded_img = _PILImage.open(_io.BytesIO(_file.contents)).convert("RGB")
-    _img_tensor = preprocess(_uploaded_img).unsqueeze(0).to(device)
-
-    with torch.no_grad(), torch.autocast(device.type):
-        _img_features = model.encode_image(_img_tensor, normalize=True)
-
-    _img_features_np = _img_features.squeeze().cpu().numpy()
-    _img_similarities = values @ _img_features_np
-
-    _top_indices = np.argsort(_img_similarities)[::-1][:9]
-    _s_min, _s_max = _img_similarities.min(), _img_similarities.max()
-
-    def _normalise(s):
-        if _s_max == _s_min:
-            return 0.0
-        return float(2.0 * (s - _s_min) / (_s_max - _s_min) - 1.0)
-
-    def _render_img(path, score):
-        try:
-            _ri = _PILImage.open(path).convert("RGB")
-            _ri.thumbnail((300, 300), _PILImage.LANCZOS)
-            _buf = _io.BytesIO()
-            _ri.save(_buf, format="JPEG", quality=80)
-            _data = _base64.b64encode(_buf.getvalue()).decode()
-            _uri = (base_folder / path).as_uri()
-            return mo.Html(
-                f'<a href="{_uri}" target="_blank" style="display:inline-block;text-decoration:none;">'
-                f'<div style="display:inline-block;width:300px;text-align:center;">'
-                f'<img src="data:image/jpeg;base64,{_data}" style="width:300px;height:300px;object-fit:cover;display:block;">'
-                f'<div style="background:#222;color:white;padding:4px 8px;font-size:14px;font-weight:bold;">'
-                f"{score:.4f}</div></div></a>"
-            )
-        except Exception:
-            return mo.md(f"_(error loading {Path(path).name})_")
+    _uploaded_img = Image.open(io.BytesIO(_file.contents)).convert("RGB")
+    _img_features_np = encode_image(model, preprocess, device, _uploaded_img)
+    _top_indices, _img_similarities = rank_by_similarity(values, _img_features_np)
+    _norm_scores = normalize_scores(_img_similarities)
 
     _items = [
-        _render_img(keys[i], _normalise(_img_similarities[i])) for i in _top_indices
+        mo.Html(render_result_card(keys[i], float(_norm_scores[i])))
+        for i in _top_indices
     ]
     mo.vstack([mo.hstack(_items[_r * 3 : _r * 3 + 3]) for _r in range(3)])
     return
