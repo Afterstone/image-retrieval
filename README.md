@@ -108,6 +108,14 @@ continues; model, memory-exhaustion and snapshot failures still stop after savin
 validated progress. Failure logs append across runs and remain Git-ignored in
 the cache directory. Treat these logs as local data: they contain original paths.
 
+Decoding recipe v2 recovers images whose pixels decode but EXIF parsing fails:
+it uses unrotated RGB pixels with the unreadable metadata removed from the in-memory
+image. Originals and original-byte hashes remain unchanged. These recoveries are
+logged as warnings (also counted in progress), not skipped images. Valid EXIF
+orientation is still applied; pixel decoding and memory failures do not use this
+fallback. The recipe version changes the cache fingerprint, so v1 snapshots remain
+untouched and v2 indexing starts a separate store.
+
 ## Development verification
 
 Ruff, ty and pytest are project **dev dependencies**, installed by `uv sync`.

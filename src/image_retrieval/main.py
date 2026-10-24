@@ -64,9 +64,17 @@ def run(argv: list[str] | None = None) -> int:
                         encoded=current.generated,
                         reused=current.reused,
                         skipped=len(current.skipped),
+                        warnings=current.metadata_warnings,
                         refresh=False,
                     )
                     bar.update(completed - bar.n)
+
+                def metadata_warning(message: str) -> None:
+                    logger.warning(
+                        "corpus=%s root=%s %s", corpus.id, corpus.root, message
+                    )
+                    handler.flush()
+                    tqdm.write(message, file=sys.stderr)
 
                 report = encode_and_index(
                     embedder,
@@ -76,9 +84,10 @@ def run(argv: list[str] | None = None) -> int:
                     checkpoint_interval=settings.runtime.checkpoint_interval,
                     report_skip=skipped,
                     report_progress=progress,
+                    report_warning=metadata_warning,
                 )
         print(
-            f"Complete: {len(store.keys)} paths; {report.generated} generated, {report.reused} reused, {len(report.skipped)} skipped.\nSnapshot: {path}"
+            f"Complete: {len(store.keys)} paths; {report.generated} generated, {report.reused} reused, {len(report.skipped)} skipped, {report.metadata_warnings} metadata warnings.\nSnapshot: {path}"
         )
         return 2 if report.skipped else 0
     except KeyboardInterrupt:

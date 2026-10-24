@@ -35,6 +35,7 @@ class IndexReport:
     generated: int = 0
     reused: int = 0
     skipped: list[str] = field(default_factory=list)
+    metadata_warnings: int = 0
 
 
 def encode_and_index(
@@ -46,6 +47,7 @@ def encode_and_index(
     checkpoint_interval: int = 500,
     report_skip: Callable[[str], None] | None = None,
     report_progress: Callable[[int, int, IndexReport], None] | None = None,
+    report_warning: Callable[[str], None] | None = None,
 ) -> IndexReport:
     """Hold the store writer lock across loading and this operation.
 
@@ -121,6 +123,12 @@ def encode_and_index(
                 progress()
                 continue
             content_hash, image = loaded.content_hash, loaded.image
+            if loaded.metadata_warning is not None:
+                report.metadata_warnings += 1
+                if report_warning:
+                    report_warning(
+                        f"Metadata warning {relative}: {loaded.metadata_warning}"
+                    )
             if content_hash in store.vectors:
                 verified[relative] = content_hash
                 store.membership[relative] = content_hash

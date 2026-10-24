@@ -194,6 +194,37 @@ def test_image_hash_rgb_first_frame_orientation_and_detachment(tmp_path):
     assert load_image(image_bytes(format="WEBP")).image.mode == "RGB"
 
 
+def test_malformed_exif_preserves_pixels_and_original_hash(tmp_path):
+    captured = image_bytes(
+        format="WEBP", exif=b"Exif\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00"
+    )
+    path = tmp_path / "metadata.webp"
+    path.write_bytes(captured)
+    loaded = load_image(path)
+    assert loaded.image.mode == "RGB" and loaded.image.size == (3, 2)
+    assert loaded.content_hash == sha256(captured).hexdigest()
+    assert loaded.metadata_warning is not None
+    assert "EXIF" in loaded.metadata_warning
+    assert not loaded.image.getexif()
+    assert path.read_bytes() == captured
+
+
+def test_indexing_recovers_and_reports_metadata_warning(tmp_path):
+    root = tmp_path / "photos"
+    root.mkdir()
+    (root / "metadata.webp").write_bytes(
+        image_bytes(format="WEBP", exif=b"Exif\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00")
+    )
+    store = make_store(tmp_path)
+    warnings = []
+    report = encode_and_index(
+        FakeEmbedder(), root, store, report_warning=warnings.append
+    )
+    assert report.generated == 1 and not report.skipped
+    assert report.metadata_warnings == 1 and store.complete
+    assert "metadata.webp" in warnings[0] and "unrotated" in warnings[0]
+
+
 @pytest.mark.parametrize(
     "vectors",
     [
@@ -606,6 +637,12 @@ def test_cli_selectors_statuses_and_errors(tmp_path, monkeypatch, capsys):
     log = logs[0].read_text()
     assert "bad.png" in log and "Traceback" in log
     assert str(root) in log
+    (root / "metadata.webp").write_bytes(
+        image_bytes(format="WEBP", exif=b"Exif\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00")
+    )
+    assert cli.run([]) == 2  # The truly corrupt bad.png is still skipped.
+    log = logs[0].read_text()
+    assert "WARNING" in log and "Metadata warning metadata.webp" in log
     assert cli.run(["--profile", "missing"]) == 1
     monkeypatch.setattr(
         cli,
