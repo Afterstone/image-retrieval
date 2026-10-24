@@ -7,199 +7,211 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import evoc
-
-    return (evoc,)
-
-
-@app.cell
-def _():
-    from wigglystuff import ParallelCoordinates
     import marimo as mo
     import polars as pl
-    import random
-    from copy import deepcopy
+    from wigglystuff import ParallelCoordinates
 
-    return ParallelCoordinates, deepcopy, mo, pl, random
+    from image_retrieval.config import load_settings
+    from image_retrieval.images import load_image
+    from image_retrieval.notebook import NotebookSession
+    from image_retrieval.render import render_result_card
+    from image_retrieval.search import normalize_scores, search
+
+    settings = load_settings()
+    session = NotebookSession(settings)
+    return (
+        ParallelCoordinates,
+        evoc,
+        load_image,
+        mo,
+        normalize_scores,
+        pl,
+        render_result_card,
+        search,
+        session,
+        settings,
+    )
 
 
 @app.cell
-def _():
-    from image_retrieval import FeatureStore
-    from image_retrieval.config import FEATURE_FILE, IMAGE_FOLDER
-
-    base_folder = IMAGE_FOLDER
-    store = FeatureStore.load(FEATURE_FILE)
-    return base_folder, store
+def _(mo, settings):
+    profile_selector = mo.ui.dropdown(
+        list(settings.profiles), value=settings.default_profile, label="Model profile"
+    )
+    corpus_selector = mo.ui.dropdown(
+        list(settings.corpora), value=settings.default_corpus, label="Collection"
+    )
+    reload_embeddings = mo.ui.run_button(label="Reload embeddings")
+    mo.vstack(
+        [
+            mo.md(
+                "# Local image retrieval\nThe CLI indexes; this notebook only reads committed snapshots."
+            ),
+            mo.hstack([profile_selector, corpus_selector, reload_embeddings]),
+        ]
+    )
+    return corpus_selector, profile_selector, reload_embeddings
 
 
 @app.cell
-def _(store):
-    keys = store.keys
-    values = store.values
-    values.shape
+def _(corpus_selector, profile_selector, session, settings):
+    session.select(profile_selector.value, corpus_selector.value)
+    selected_space = (profile_selector.value, corpus_selector.value)
+    _, collection = settings.select(*selected_space)
+    return collection, selected_space
+
+
+@app.cell
+def _(mo, reload_embeddings, selected_space, session):
+    reload_embeddings.value
+    selected_space
+    snapshot = None
+    snapshot_error = None
+    try:
+        snapshot = session.reload()
+    except (OSError, ValueError) as _exc:
+        snapshot_error = str(_exc)
+    mo.stop(
+        snapshot is None,
+        mo.vstack(
+            [
+                mo.md(f"**Embeddings unavailable:** {snapshot_error}"),
+                mo.md(
+                    f"Index this space in a terminal, then click **Reload embeddings**:\n\n`{session.indexing_guidance()}`"
+                ),
+            ]
+        ),
+    )
+    assert snapshot is not None  # mo.stop terminates the cell on a missing snapshot.
+    mo.md(
+        "**Snapshot: complete**"
+        if snapshot.complete
+        else "**Snapshot: incomplete — retained paths may be stale. Resume indexing with the CLI.**"
+    )
+    return (snapshot,)
+
+
+@app.cell
+def _(snapshot):
+    keys = snapshot.keys
+    values = snapshot.values
     return keys, values
 
 
 @app.cell
-def _(evoc, values):
-    clusterer = evoc.EVoC()
-    clusters = clusterer.fit_predict(values)
-    return (clusterer,)
+def _(mo, selected_space):
+    selected_space
+    search_query = mo.ui.text(
+        placeholder="Search for images…", label="Text query", full_width=True
+    )
+    upload_image = mo.ui.file(
+        filetypes=[".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"],
+        label="Image query",
+    )
+    mo.vstack(
+        [
+            search_query,
+            upload_image,
+            mo.md(
+                "Scores are query-relative min-max values in [-1, 1], **not probabilities**. Do not compare scores across models."
+            ),
+        ]
+    )
+    return search_query, upload_image
 
 
 @app.cell
-def _(clusterer, pl):
+def _(
+    collection,
+    mo,
+    normalize_scores,
+    render_result_card,
+    search,
+    search_query,
+    session,
+    snapshot,
+):
+    mo.stop(not search_query.value, mo.md("Enter a text query above."))
+    _indices, _similarities = search(snapshot, session.embedder, search_query.value)
+    _scores = normalize_scores(_similarities)
+    _cards = [
+        mo.Html(
+            render_result_card(
+                snapshot.keys[i], float(_scores[i]), root=collection.root
+            )
+        )
+        for i in _indices
+    ]
+    mo.vstack([mo.hstack(_cards[i : i + 3]) for i in range(0, len(_cards), 3)])
+    return
+
+
+@app.cell
+def _(
+    collection,
+    load_image,
+    mo,
+    normalize_scores,
+    render_result_card,
+    search,
+    session,
+    snapshot,
+    upload_image,
+):
+    mo.stop(not upload_image.value, mo.md("Upload an image to find similar images."))
+    try:
+        _image = load_image(upload_image.value[0].contents).image
+    except (OSError, ValueError) as _exc:
+        mo.stop(True, mo.md(f"Cannot decode uploaded image: {_exc}"))
+    try:
+        _indices, _similarities = search(snapshot, session.embedder, _image)
+    finally:
+        _image.close()
+    _scores = normalize_scores(_similarities)
+    _cards = [
+        mo.Html(
+            render_result_card(
+                snapshot.keys[i], float(_scores[i]), root=collection.root
+            )
+        )
+        for i in _indices
+    ]
+    mo.vstack([mo.hstack(_cards[i : i + 3]) for i in range(0, len(_cards), 3)])
+    return
+
+
+@app.cell
+def _(evoc, mo, pl, values):
+    mo.stop(
+        len(values) < 3,
+        mo.md("At least three indexed images are needed for clustering."),
+    )
+    clusterer = evoc.EVoC()
+    clusterer.fit_predict(values)
+    _layers = clusterer.cluster_layers_
+    mo.stop(not _layers, mo.md("No cluster layers were found for this collection."))
     df = pl.DataFrame(
-        {
-            f"Layer_{len(clusterer.cluster_layers_) - i}": v
-            for i, v in enumerate(clusterer.cluster_layers_)
-        }
+        {f"Layer_{len(_layers) - i}": layer for i, layer in enumerate(_layers)}
     )
     return (df,)
 
 
 @app.cell
 def _(ParallelCoordinates, df, mo):
-    widget_inner = ParallelCoordinates(df, height=500, color_by="label")
-    widget = mo.ui.anywidget(widget_inner)
+    widget = mo.ui.anywidget(
+        ParallelCoordinates(df, height=500, color_by=df.columns[0])
+    )
     widget
     return (widget,)
 
 
 @app.cell
-def _(keys, widget):
-    selected_img_paths = [keys[i] for i in widget.selected_indices]
-    return (selected_img_paths,)
-
-
-@app.cell
-def _(base_folder, deepcopy, mo, random, selected_img_paths):
-    imgs_to_display = deepcopy(selected_img_paths)
-    random.shuffle(imgs_to_display)
-    imgs_to_display = imgs_to_display[: 3 * 3]
-    rows = [imgs_to_display[i : i + 3] for i in range(0, len(imgs_to_display), 3)]
-
-    def _clickable_image(path):
-        full_path = base_folder / path
-        img = mo.image(str(full_path), width=300, height=300)
-        return mo.Html(
-            f'<a href="{full_path.as_uri()}" target="_blank" title="Open original" style="display:inline-block;cursor:pointer;">{img.text}</a>'
-        )
-
-    mo.vstack([mo.hstack([_clickable_image(path) for path in row]) for row in rows])
-    return
-
-
-@app.cell
-def _():
-    from image_retrieval import (
-        get_device,
-        load_siglip2,
-        encode_text,
-        encode_image,
-        normalize_scores,
-        rank_by_similarity,
-        render_result_card,
-    )
-
-    device = get_device()
-    model, preprocess, tokenizer = load_siglip2(device=device)
-    return (
-        device,
-        encode_image,
-        encode_text,
-        model,
-        normalize_scores,
-        preprocess,
-        rank_by_similarity,
-        render_result_card,
-        tokenizer,
-    )
-
-
-@app.cell
-def _(mo):
-    search_query = mo.ui.text(
-        placeholder="Search for images...",
-        label="Search query",
-        full_width=True,
-    )
-    search_query
-    return (search_query,)
-
-
-@app.cell
-def _(
-    device,
-    encode_text,
-    keys,
-    mo,
-    model,
-    normalize_scores,
-    rank_by_similarity,
-    render_result_card,
-    search_query,
-    tokenizer,
-    values,
-):
-    _query = search_query.value
-    mo.stop(not _query, mo.md("Enter a search query above."))
-
-    _text_features_np = encode_text(model, tokenizer, device, _query)
-    _top_indices, _similarities = rank_by_similarity(values, _text_features_np)
-    _norm_scores = normalize_scores(_similarities)
-
-    _items = [
-        mo.Html(render_result_card(keys[i], float(_norm_scores[i])))
-        for i in _top_indices
+def _(collection, keys, mo, render_result_card, widget):
+    _paths = [keys[i] for i in widget.selected_indices if 0 <= i < len(keys)][:9]
+    _cards = [
+        mo.Html(render_result_card(path, root=collection.root)) for path in _paths
     ]
-    mo.vstack([mo.hstack(_items[_r * 3 : _r * 3 + 3]) for _r in range(3)])
-    return
-
-
-@app.cell
-def _(mo):
-    upload_image = mo.ui.file(
-        filetypes=[".jpg", ".jpeg", ".png", ".bmp", ".webp"],
-        label="Upload an image to search for similar images",
-    )
-    upload_image
-    return (upload_image,)
-
-
-@app.cell
-def _(
-    device,
-    encode_image,
-    keys,
-    mo,
-    model,
-    normalize_scores,
-    preprocess,
-    rank_by_similarity,
-    render_result_card,
-    upload_image,
-    values,
-):
-    import io
-    from PIL import Image
-
-    mo.stop(
-        not upload_image.value,
-        mo.md("Upload an image above to find similar images."),
-    )
-
-    _file = upload_image.value[0]
-    _uploaded_img = Image.open(io.BytesIO(_file.contents)).convert("RGB")
-    _img_features_np = encode_image(model, preprocess, device, _uploaded_img)
-    _top_indices, _img_similarities = rank_by_similarity(values, _img_features_np)
-    _norm_scores = normalize_scores(_img_similarities)
-
-    _items = [
-        mo.Html(render_result_card(keys[i], float(_norm_scores[i])))
-        for i in _top_indices
-    ]
-    mo.vstack([mo.hstack(_items[_r * 3 : _r * 3 + 3]) for _r in range(3)])
+    mo.vstack([mo.hstack(_cards[i : i + 3]) for i in range(0, len(_cards), 3)])
     return
 
 

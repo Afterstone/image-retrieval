@@ -1,0 +1,31 @@
+schema_version: 1
+default_profile: gemma2
+default_corpus: memes
+cache_root: .cache/image-retrieval
+profiles:
+  gemma2:
+    family: embeddinggemma2
+    model: google/embeddinggemma-2
+    revision: 914f7f89142e33e77833254d9c9b90c3cef7303b
+    processor_revision: 914f7f89142e33e77833254d9c9b90c3cef7303b
+  siglip2:
+    family: siglip2
+    model: google/siglip2-so400m-patch14-384
+    revision: e8e487298228002f3d8a82e0cd5c8ea9c567f57f
+    processor_revision: e8e487298228002f3d8a82e0cd5c8ea9c567f57f
+corpora:
+  tournament:
+    id: tournament
+    root: /Users/rikard/Downloads/tournament
+  memes:
+    id: memes
+    root: "/Users/rikard/Google Drive/Memes"
+  gifs:
+    id: gifs
+    root: "/Users/rikard/Google Drive/Gifs"
+runtime:
+  device: auto
+  precision: float32
+  batch_size: 1
+  offline: false
+  checkpoint_interval: 500
