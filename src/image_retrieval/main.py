@@ -3,9 +3,11 @@
 import argparse
 import sys
 
+from tqdm import tqdm
+
 from .config import load_settings
 from .features import FeatureStore, writer_lock
-from .indexing import encode_and_index
+from .indexing import IndexReport, encode_and_index
 from .model import create_embedder
 
 
@@ -29,14 +31,27 @@ def run(argv: list[str] | None = None) -> int:
             store = FeatureStore.load(
                 path, corpus.id, embedder.manifest, missing_ok=True
             )
-            report = encode_and_index(
-                embedder,
-                corpus.root,
-                store,
-                batch_size=settings.runtime.batch_size,
-                checkpoint_interval=settings.runtime.checkpoint_interval,
-                report_skip=lambda message: print(message, file=sys.stderr),
-            )
+            with tqdm(desc="Indexing images", unit="image", dynamic_ncols=True) as bar:
+
+                def progress(completed: int, total: int, current: IndexReport) -> None:
+                    bar.total = total
+                    bar.set_postfix(
+                        encoded=current.generated,
+                        reused=current.reused,
+                        skipped=len(current.skipped),
+                        refresh=False,
+                    )
+                    bar.update(completed - bar.n)
+
+                report = encode_and_index(
+                    embedder,
+                    corpus.root,
+                    store,
+                    batch_size=settings.runtime.batch_size,
+                    checkpoint_interval=settings.runtime.checkpoint_interval,
+                    report_skip=lambda message: tqdm.write(message, file=sys.stderr),
+                    report_progress=progress,
+                )
         print(
             f"Complete: {len(store.keys)} paths; {report.generated} generated, {report.reused} reused, {len(report.skipped)} skipped.\nSnapshot: {path}"
         )

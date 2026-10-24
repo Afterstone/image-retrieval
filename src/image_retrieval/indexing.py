@@ -45,6 +45,7 @@ def encode_and_index(
     batch_size: int = 1,
     checkpoint_interval: int = 500,
     report_skip: Callable[[str], None] | None = None,
+    report_progress: Callable[[int, int, IndexReport], None] | None = None,
 ) -> IndexReport:
     """Hold the store writer lock across loading and this operation.
 
@@ -65,6 +66,11 @@ def encode_and_index(
     pending: dict[str, tuple[Image.Image, list[str]]] = {}
     since_checkpoint = 0
     store.complete = False
+    total = 0
+
+    def progress():
+        if report_progress:
+            report_progress(len(verified) + len(report.skipped), total, report)
 
     def flush():
         nonlocal since_checkpoint
@@ -87,6 +93,7 @@ def encode_and_index(
             report.generated += len(hashes)
             since_checkpoint += len(hashes)
             pending.clear()
+            progress()
             if since_checkpoint == checkpoint_interval:
                 store.save()
                 since_checkpoint = 0
@@ -95,7 +102,10 @@ def encode_and_index(
                 image.close()
 
     try:
-        for path in discover_images(root):
+        candidates = discover_images(root)
+        total = len(candidates)
+        progress()
+        for path in candidates:
             relative = path.relative_to(root).as_posix()
             try:
                 loaded = load_image(path)
@@ -103,6 +113,7 @@ def encode_and_index(
                 report.skipped.append(relative)
                 if report_skip:
                     report_skip(f"Skipped {relative}: {exc}")
+                progress()
                 continue
             content_hash, image = loaded.content_hash, loaded.image
             if content_hash in store.vectors:
@@ -110,6 +121,7 @@ def encode_and_index(
                 store.membership[relative] = content_hash
                 report.reused += 1
                 image.close()
+                progress()
             elif content_hash in pending:
                 pending[content_hash][1].append(relative)
                 report.reused += 1

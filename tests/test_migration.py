@@ -68,7 +68,9 @@ def make_store(tmp_path, embedder=None):
 
 def config_data():
     data = yaml.safe_load((ROOT / "profiles.yaml").read_text())
-    data["corpora"]["images"]["root"] = "photos"
+    # Collection names and machine-local paths are user settings, not test fixtures.
+    data["default_corpus"] = "images"
+    data["corpora"] = {"images": {"id": "test-images", "root": "photos"}}
     return data
 
 
@@ -437,6 +439,32 @@ def test_reconcile_new_noop_changed_renamed_deleted_duplicate_and_webp(tmp_path)
     assert report.skipped == ["renamed.png"] and store.keys == ["b.webp"]
 
 
+def test_progress_tracks_handled_paths_after_validated_batches(tmp_path):
+    root = tmp_path / "photos"
+    root.mkdir()
+    for name, color in (("a.png", "red"), ("b.png", "red"), ("c.png", "blue")):
+        (root / name).write_bytes(image_bytes(color))
+    (root / "d.png").write_bytes(b"broken")
+    store = make_store(tmp_path)
+    events = []
+
+    def progress(completed, total, report):
+        events.append(
+            (completed, total, report.generated, report.reused, len(report.skipped))
+        )
+
+    encode_and_index(
+        FakeEmbedder(), root, store, batch_size=2, report_progress=progress
+    )
+    assert events[0] == (0, 4, 0, 0, 0)
+    assert events[-1] == (4, 4, 2, 1, 1)
+    # Pending duplicates only advance once the shared embedding is validated.
+    assert not any(0 < event[0] < 3 for event in events)
+    events.clear()
+    encode_and_index(FakeEmbedder(), root, store, report_progress=progress)
+    assert events[-1] == (4, 4, 0, 3, 1)
+
+
 def test_checkpoints_count_successful_unique_vectors(tmp_path, monkeypatch):
     root = tmp_path / "photos"
     root.mkdir()
@@ -522,6 +550,10 @@ def test_cli_selectors_statuses_and_errors(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "load_settings", lambda path: settings)
     monkeypatch.setattr(cli, "create_embedder", lambda *a: FakeEmbedder())
     assert cli.run(["--profile", "siglip2", "--corpus", "images"]) == 0
+    _output = capsys.readouterr()
+    assert "Indexing images" in _output.err
+    assert "100%" in _output.err
+    assert "encoded=1" in _output.err
     (root / "bad.png").write_bytes(b"invalid")
     assert cli.run([]) == 2
     assert "Skipped bad.png" in capsys.readouterr().err
