@@ -1,7 +1,9 @@
 """The CLI is the sole corpus writer."""
 
 import argparse
+import logging
 import sys
+from contextlib import closing
 
 from tqdm import tqdm
 
@@ -31,7 +33,30 @@ def run(argv: list[str] | None = None) -> int:
             store = FeatureStore.load(
                 path, corpus.id, embedder.manifest, missing_ok=True
             )
-            with tqdm(desc="Indexing images", unit="image", dynamic_ncols=True) as bar:
+            failure_log = path.with_name("indexing-failures.log")
+            print(f"Image failure log: {failure_log}", file=sys.stderr)
+            with (
+                closing(logging.FileHandler(failure_log, encoding="utf-8")) as handler,
+                tqdm(desc="Indexing images", unit="image", dynamic_ncols=True) as bar,
+            ):
+                # A local logger avoids changing application/global logging handlers.
+                logger = logging.Logger("image_retrieval.indexing.failures")
+                handler.setFormatter(
+                    logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+                )
+                logger.addHandler(handler)
+
+                def skipped(message: str) -> None:
+                    # Called inside the decoder's exception handler: retain traceback.
+                    logger.error(
+                        "corpus=%s root=%s %s",
+                        corpus.id,
+                        corpus.root,
+                        message,
+                        exc_info=True,
+                    )
+                    handler.flush()
+                    tqdm.write(message, file=sys.stderr)
 
                 def progress(completed: int, total: int, current: IndexReport) -> None:
                     bar.total = total
@@ -49,7 +74,7 @@ def run(argv: list[str] | None = None) -> int:
                     store,
                     batch_size=settings.runtime.batch_size,
                     checkpoint_interval=settings.runtime.checkpoint_interval,
-                    report_skip=lambda message: tqdm.write(message, file=sys.stderr),
+                    report_skip=skipped,
                     report_progress=progress,
                 )
         print(

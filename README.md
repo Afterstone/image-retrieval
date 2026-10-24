@@ -101,6 +101,12 @@ clearly, without silently discarding them.
 Exit statuses: `0` completed successfully; `2` completed with skipped images (also
 standard argument errors); `1` config/store/runtime failure; `130` interrupted.
 Skipped paths and failure summaries go to the terminal.
+Per-image decoding exceptions also append timestamps, corpus/root, failed paths
+and tracebacks to `indexing-failures.log` alongside the selected `features.npz`.
+The CLI prints the log location at startup. Bad images are skipped and indexing
+continues; model, memory-exhaustion and snapshot failures still stop after saving
+validated progress. Failure logs append across runs and remain Git-ignored in
+the cache directory. Treat these logs as local data: they contain original paths.
 
 ## Development verification
 

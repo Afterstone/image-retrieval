@@ -32,7 +32,7 @@ class FakeEmbedder:
     dimension = 3
     manifest = {"dimension": 3, "recipe": "offline-fake-v1"}
 
-    def __init__(self, fail_at=None, failure=RuntimeError):
+    def __init__(self, fail_at=None, failure: type[BaseException] = RuntimeError):
         self.batches = []
         self.fail_at = fail_at
         self.failure = failure
@@ -55,7 +55,7 @@ class FakeEmbedder:
         self.closed = True
 
 
-def image_bytes(color="red", format="PNG", **kwargs):
+def image_bytes(color: str | tuple[int, int, int] = "red", format="PNG", **kwargs):
     buffer = BytesIO()
     Image.new("RGB", (3, 2), color).save(buffer, format=format, **kwargs)
     return buffer.getvalue()
@@ -236,7 +236,7 @@ def test_factory_identity_and_empty_batches(monkeypatch):
         )
 
 
-def test_gemma_routing_order_and_no_prefix():
+def test_gemma_routing_order_and_no_prefix(monkeypatch):
     profile = Profile("embeddinggemma2", "google/embeddinggemma-2", "a" * 40, "a" * 40)
     adapter = EmbeddingGemma2(profile, Runtime(batch_size=2), "cpu")
     calls = []
@@ -249,7 +249,7 @@ def test_gemma_routing_order_and_no_prefix():
                 result[i, i] = 2
             return result
 
-    adapter._model = Double()
+    monkeypatch.setattr(adapter, "_model", Double())
     vectors = adapter.encode_texts(["https://example.com/cat.jpg", "second"])
     assert vectors[0, 0] == vectors[1, 1] == 1
     assert calls[-1][0] == [{"text": "https://example.com/cat.jpg"}, {"text": "second"}]
@@ -311,7 +311,8 @@ def test_siglip_modeloutput_processor_and_bounded_batches():
 
     def processor(**kwargs):
         calls.append(kwargs)
-        return Inputs(n=len(kwargs.get("text", kwargs.get("images"))))
+        batch = kwargs["text"] if "text" in kwargs else kwargs["images"]
+        return Inputs(n=len(batch))
 
     class Model:
         def get_text_features(self, n, return_dict):
@@ -439,6 +440,49 @@ def test_reconcile_new_noop_changed_renamed_deleted_duplicate_and_webp(tmp_path)
     assert report.skipped == ["renamed.png"] and store.keys == ["b.webp"]
 
 
+@pytest.mark.parametrize("decoder_error", [SyntaxError, RuntimeError])
+def test_decoder_failure_skips_bad_image_and_continues(
+    tmp_path, monkeypatch, decoder_error
+):
+    import image_retrieval.indexing as indexing
+
+    root = tmp_path / "photos"
+    root.mkdir()
+    for name in ("a.png", "b.png", "c.png"):
+        (root / name).write_bytes(image_bytes())
+    original_loader = indexing.load_image
+
+    def decode(path):
+        if path.name == "b.png":
+            raise decoder_error("not a TIFF file (header not valid)")
+        return original_loader(path)
+
+    monkeypatch.setattr(indexing, "load_image", decode)
+    store = make_store(tmp_path)
+    failures = []
+    report = encode_and_index(FakeEmbedder(), root, store, report_skip=failures.append)
+    assert report.skipped == ["b.png"]
+    assert store.complete and store.keys == ["a.png", "c.png"]
+    assert "b.png" in failures[0] and "not a TIFF file" in failures[0]
+
+
+def test_decoder_memory_error_stops_and_saves_progress(tmp_path, monkeypatch):
+    import image_retrieval.indexing as indexing
+
+    root = tmp_path / "photos"
+    root.mkdir()
+    (root / "a.png").write_bytes(image_bytes())
+    store = make_store(tmp_path)
+
+    def decode(path):
+        raise MemoryError("resource exhaustion")
+
+    monkeypatch.setattr(indexing, "load_image", decode)
+    with pytest.raises(MemoryError):
+        encode_and_index(FakeEmbedder(), root, store)
+    assert not FeatureStore.load(store.path, "test", store.manifest).complete
+
+
 def test_progress_tracks_handled_paths_after_validated_batches(tmp_path):
     root = tmp_path / "photos"
     root.mkdir()
@@ -557,6 +601,11 @@ def test_cli_selectors_statuses_and_errors(tmp_path, monkeypatch, capsys):
     (root / "bad.png").write_bytes(b"invalid")
     assert cli.run([]) == 2
     assert "Skipped bad.png" in capsys.readouterr().err
+    logs = list(settings.cache_root.rglob("indexing-failures.log"))
+    assert len(logs) == 1
+    log = logs[0].read_text()
+    assert "bad.png" in log and "Traceback" in log
+    assert str(root) in log
     assert cli.run(["--profile", "missing"]) == 1
     monkeypatch.setattr(
         cli,

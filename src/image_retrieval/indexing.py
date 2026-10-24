@@ -109,10 +109,15 @@ def encode_and_index(
             relative = path.relative_to(root).as_posix()
             try:
                 loaded = load_image(path)
-            except (OSError, ValueError, Image.DecompressionBombError) as exc:
+            except MemoryError:
+                # Resource exhaustion is systemic, not a corrupt-image skip.
+                raise
+            except Exception as exc:
+                # Pillow plugins can raise SyntaxError, struct.error, RuntimeError,
+                # etc. Isolate decoding only; inference/store failures still stop.
                 report.skipped.append(relative)
                 if report_skip:
-                    report_skip(f"Skipped {relative}: {exc}")
+                    report_skip(f"Skipped {relative}: {type(exc).__name__}: {exc}")
                 progress()
                 continue
             content_hash, image = loaded.content_hash, loaded.image
