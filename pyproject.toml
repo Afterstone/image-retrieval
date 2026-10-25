@@ -22,6 +22,7 @@ dependencies = [
     "tqdm>=4.67.3",
     "transformers>=5.20.2,<6",
     "wigglystuff>=0.3.5",
+    "scalene>=2.4.0",
 ]
 
 [project.scripts]
